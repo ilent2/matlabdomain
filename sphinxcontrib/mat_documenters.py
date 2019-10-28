@@ -9,13 +9,9 @@
     :license: BSD, see LICENSE for details.
 """
 from __future__ import unicode_literals
-
-from .mat_types import (MatModule, MatObject, MatFunction, MatClass, MatProperty,
-                        MatMethod, MatScript, MatException, MatModuleAnalyzer)
-
-
 import re
 import sys
+import inspect
 import traceback
 from six import itervalues
 
@@ -23,11 +19,10 @@ from docutils.statemachine import ViewList
 
 from sphinx.util import rpartition, force_decode
 from sphinx.locale import _
-from sphinx.pycode import PycodeError
-# from sphinx.util.nodes import nested_parse_with_titles
-# from sphinx.util.inspect import getargspec, isdescriptor, safe_getmembers, \
-#      safe_getattr, is_builtin_class_method
-from sphinx.util.inspect import safe_getmembers, safe_getattr
+from sphinx.pycode import ModuleAnalyzer as PyModuleAnalyzer, PycodeError
+from sphinx.util.nodes import nested_parse_with_titles
+from sphinx.util.inspect import getargspec, isdescriptor, safe_getmembers, \
+     safe_getattr, is_builtin_class_method
 from sphinx.util import logging
 try:
     # Sphinx >= 1.3.0
@@ -57,6 +52,9 @@ mat_ext_sig_re = re.compile(
           )? $                          # and nothing more
           ''', re.VERBOSE)
 
+from .mat_types import *
+# import MatObject, MatModule, MatFunction, MatClass, MatProperty, MatMethod,
+# MatScript, MatException, MatModuleAnalyzer
 
 # TODO: check MRO's for all classes, attributes and methods!!!
 
@@ -95,7 +93,8 @@ class MatlabDocumenter(PyDocumenter):
             modname = None
             parents = []
 
-        self.modname, self.objpath = self.resolve_name(modname, parents, path, base)
+        self.modname, self.objpath = \
+                      self.resolve_name(modname, parents, path, base)
 
         if not self.modname:
             return False
@@ -121,19 +120,19 @@ class MatlabDocumenter(PyDocumenter):
         # sets Matlab src file encoding for parsing
         MatObject.encoding = self.env.config.matlab_src_encoding
         if self.objpath:
-            logger.debug('[sphinxcontrib-matlabdomain] from %s import %s',
-                         self.modname, '.'.join(self.objpath))
+            logger.debug('[autodoc] from %s import %s',
+                self.modname, '.'.join(self.objpath))
         try:
-            logger.debug('[sphinxcontrib-matlabdomain] import %s', self.modname)
+            logger.debug('[autodoc] import %s', self.modname)
             MatObject.matlabify(self.modname)
             parent = None
             obj = self.module = sys.modules[self.modname]
-            logger.debug('[sphinxcontrib-matlabdomain] => %r', obj)
+            logger.debug('[autodoc] => %r', obj)
             for part in self.objpath:
                 parent = obj
-                logger.debug('[sphinxcontrib-matlabdomain] getattr(_, %r)', part)
+                logger.debug('[autodoc] getattr(_, %r)', part)
                 obj = self.get_attr(obj, part)
-                logger.debug('[sphinxcontrib-matlabdomain] => %r', obj)
+                logger.debug('[autodoc] => %r', obj)
                 self.object_name = part
             self.parent = parent
             self.object = obj
@@ -142,10 +141,10 @@ class MatlabDocumenter(PyDocumenter):
         # but importing modules with side effects can raise all kinds of errors
         except Exception:
             if self.objpath:
-                errmsg = '[sphinxcontrib-matlabdomain]: failed to import %s %r from module %r' % \
+                errmsg = 'autodoc: failed to import %s %r from module %r' % \
                          (self.objtype, '.'.join(self.objpath), self.modname)
             else:
-                errmsg = '[sphinxcontrib-matlabdomain]: failed to import %s %r' % \
+                errmsg = 'autodoc: failed to import %s %r' % \
                          (self.objtype, self.fullname)
             errmsg += '; the following exception was raised:\n%s' % \
                       traceback.format_exc()
@@ -452,11 +451,8 @@ class MatlabDocumenter(PyDocumenter):
         # document non-skipped members
         memberdocumenters = []
         for (mname, member, isattr) in self.filter_members(members, want_all):
-            classes = []
-            for name, cls in self.documenters.items():
-                if name.startswith('mat:'):
-                    if cls.can_document_member(member, mname, isattr, self):
-                        classes.append(cls)
+            classes = [cls for cls in itervalues(self.documenters)
+                       if cls.can_document_member(member, mname, isattr, self)]
             if not classes:
                 # don't know how to document this member
                 continue
@@ -528,7 +524,7 @@ class MatlabDocumenter(PyDocumenter):
             # be cached anyway)
             self.analyzer.find_attr_docs()
         except PycodeError as err:
-            self.env.app.debug('[sphinxcontrib-matlabdomain] module analyzer failed: %s', err)
+            self.env.app.debug('[autodoc] module analyzer failed: %s', err)
             # no source file -- e.g. for builtin and C modules
             self.analyzer = None
             # at least add the module.__file__ as a dependency
@@ -776,9 +772,9 @@ class MatClassDocumenter(MatModuleLevelDocumenter):
             return None
         if initmeth.args:
             if initmeth.args[0] == 'obj':
-                return '(' + ', '.join(initmeth.args[1:]) + ')'
+                return '('+ ', '.join(initmeth.args[1:]) + ')'
             else:
-                return '(' + ', '.join(initmeth.args) + ')'
+                return '('+ ', '.join(initmeth.args) + ')'
         else:
             return None
 
@@ -941,7 +937,6 @@ class MatAttributeDocumenter(MatClassLevelDocumenter):
     def import_object(self):
         ret = MatClassLevelDocumenter.import_object(self)
         # getset = self.object.name.split('_')
-
         if (#getset[0] in ['get','set'] and
             #getset[1:] in self.object.cls.propeties and
             isinstance(self.object, MatMethod)):
@@ -1014,7 +1009,6 @@ class MatInstanceAttributeDocumenter(MatAttributeDocumenter):
         # MatAttributeDocumenter.add_content(self, more_content,
         #                                    no_docstring=True)
         MatAttributeDocumenter.add_content(self, more_content, no_docstring)
-
 
 class MatScriptDocumenter(MatModuleLevelDocumenter):
     """
